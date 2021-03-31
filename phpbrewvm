@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+
+APP_COMMAND=${1}
+PHP_VERSION=${2}
+
+echoerr() {
+  echo "${@}" 2>&1
+}
+
+phpbrewvm_get_desired_version() {
+  DESIRED_VERSION=${PHP_VERSION}
+  if [[ -z ${PHP_VERSION} ]]; then
+    # no version specified. See if there's a composer.json we can grab it from
+    if [[ -f composer.json ]]; then
+      DESIRED_VERSION=$(cat composer.json | jq .require.php | sed -e 's/[^0-9\.]//g')
+    fi
+  fi
+  if [[ -n ${DESIRED_VERSION} ]]; then
+    echo ${DESIRED_VERSION}
+  else
+    echoerr "No php version specified and no composer file exists. Exiting."
+    exit 255
+  fi
+}
+
+phpbrewvm_check_deps() {
+
+
+  if [[ -z $(which brew) ]]; then
+    echoerr "Homebrew required. Please install it using this command:"
+    echoerr ""
+    echoerr ' /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+    exit 254
+  fi
+
+  if [[ -z $(which jq) ]]; then
+    echoerr "JQ not installed. Install it using: "
+    echoerr "  brew install jq"
+    exit 253
+  fi
+}
+
+phpbrewvm_installed_versions() {
+  BREW_OUTPUT=$(brew info --json=v2 php)
+  INSTALLED_ALIAS=$(echo "${BREW_OUTPUT}" | jq -r '.formulae[] | select(.name = "php") | .aliases[]' | sed -e "s/php@//g" | tr " " "\n")
+  INSTALLED_VARIANTS=$(echo "${BREW_OUTPUT}" | jq -r '.formulae[] | select(.name = "php") | .versioned_formulae[]' | sed -e "s/php@//g" | tr " " "\n")
+  [[ -n ${INSTALLED_ALIAS} ]] && echo "${INSTALLED_ALIAS}"
+  [[ -n ${INSTALLED_VARIANTS} ]] && echo "${INSTALLED_VARIANTS}"
+}
+
+phpbrewvm_is_installed() {
+  PHP_VERSION_CHECK=${1}
+
+  INSTALLED_VERSIONS=$(brew info --json=v2 php | jq -r '.formulae[] | select(.name = "php") | .versioned_formulae[]')
+  if echo "${INSTALLED_VERSIONS}" | grep -q "php@${PHP_VERSION_CHECK}"; then
+    echo 1
+  else
+    echo 0
+  fi
+}
+phpbrewvm_install() {
+  DESIRED_VERSION=$(phpbrewvm_get_desired_version)
+  echoerr "Installing php version ${DESIRED_VERSION}"
+
+  if [[ "x$(phpbrewvm_is_installed ${DESIRED_VERSION})" == "x1" ]]; then
+    echo "Php version ${DESIRED_VERSION} already installed."
+    exit 0;
+  fi
+  brew install "php@${DESIRED_VERSION}"
+}
+
+phpbrewvm_use() {
+  DESIRED_VERSION=$(phpbrewvm_get_desired_version)
+
+  if [[ "x$(phpbrewvm_is_installed ${DESIRED_VERSION})" == "x0" ]]; then
+    echoerr "PHP version ${DESIRED_VERSION} is not yet installed."
+    exit 1;
+  fi
+  echo "Selecting PHP version ${DESIRED_VERSION}"
+  brew unlink "php@${DESIRED_VERSION}" && brew link --force "php@${DESIRED_VERSION}"
+}
+
+phpbrewvm_list() {
+  INSTALLED_VERSIONS=$(phpbrewvm_installed_versions)
+  echo "Installed PHP Versions:"
+  echo "${INSTALLED_VERSIONS}"
+}
+
+usage() {
+  cat<<EOT
+  Usage:
+    ${0} install <php-version>   -- Installs the given php version. If no version is
+                                           specified, attempts to use composer.json
+    ${0} use <php-version>       -- Selects specified version to use
+    ${0} list                    -- lists installed php versions
+EOT
+}
+
+phpbrewvm_check_deps
+case ${APP_COMMAND} in
+  install)
+    phpbrewvm_install
+    ;;
+  use)
+    phpbrewvm_use
+    ;;
+  list)
+    phpbrewvm_list
+    ;;
+  *)
+    usage
+    ;;
+esac
